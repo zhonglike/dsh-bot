@@ -17,7 +17,7 @@ A standard Cordis bundle with a Host half and a Web Client half. Works in the of
 - Fixed configuration page title: **选择哪个区域需要什么模型**
 - 8 presets plus unlimited custom zones
 - Per-zone enable/disable, display name, and model selection
-- Forced configuration on the first visit to a project
+- First-visit setup prompt per project; dismissible, with the state remembered
 - Persistent **重新配置区域模型** entry in the composer
 - Per-project storage (`Workspace / cwd`), no API keys stored
 - `zone_list` and `zone_dispatch` tools for the orchestrator
@@ -37,8 +37,8 @@ Repository: https://github.com/zhonglike/dsh-bot
 2. Call plugin_manager with action=install_bundle and target=<absolute path>.
 3. Confirm application=applied and warnings is empty.
 4. Refresh the DSH Web page if needed.
-5. Open a new project/session. A page titled
-   "选择哪个区域需要什么模型" must appear.
+5. Open a new project/session. A closable page titled
+   "选择哪个区域需要什么模型" appears.
 Do not change the package name or implement model discovery yourself.
 ```
 
@@ -51,8 +51,8 @@ Detailed checklist: [docs/AI-INSTALL.md](docs/AI-INSTALL.md).
 1. Open **Settings → Models** and make sure at least one provider/model is available.
    Add a custom API with the official Base URL + API Key form and pull models with **获取可用模型**.
 2. Open a new project/session.
-3. Configure the **main** zone (required), enable the zones you need, and pick models.
-4. Click **保存并开始**.
+3. Configure the **main** zone (required), enable the zones you need, and pick models, or close the page.
+4. Click **保存并开始** when you are ready.
 5. Use **重新配置区域模型** at any time.
 
 ---
@@ -92,6 +92,7 @@ The file maps a normalized project cwd to its zone list. It contains no secrets.
 - `zone_dispatch` for text-like zones is single-turn and has no tools.
 - The main zone overrides the root session's model on every request.
 - Subagents are not overridden.
+- If `/zone-router/api` returns 404 after a restart, the plugin was removed from the active profile (often a local-link install overwritten by a profile reinstall). Reinstall from the release tarball and verify `include:dsh-bot` is active.
 
 ---
 

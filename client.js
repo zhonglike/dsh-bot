@@ -132,6 +132,8 @@ window.__ModuleLoader__.load({
       return { provider: value.slice(0, index), model: value.slice(index + 1) };
     }
 
+    const SERVICE_404 = '区域配置服务未加载（HTTP 404）。dsh-bot 的 Host 半可能未安装/未启用，或 DSH 重启后 profile 中的插件已被移除。请重新安装并刷新页面后再试。';
+
     async function apiGet(query, signal) {
       let response;
       try {
@@ -148,10 +150,10 @@ window.__ModuleLoader__.load({
       try {
         body = await response.json();
       } catch {
-        throw new Error(`区域配置服务返回了无法解析的响应（HTTP ${response.status}）`);
+        throw new Error(response.status === 404 ? SERVICE_404 : `区域配置服务返回了无法解析的响应（HTTP ${response.status}）`);
       }
       if (!response.ok || !body || body.ok !== true) {
-        throw new Error(body?.error?.message || `区域配置请求失败（HTTP ${response.status}）`);
+        throw new Error(response.status === 404 ? SERVICE_404 : (body?.error?.message || `区域配置请求失败（HTTP ${response.status}）`));
       }
       return body;
     }
@@ -173,10 +175,10 @@ window.__ModuleLoader__.load({
       try {
         body = await response.json();
       } catch {
-        throw new Error(`区域配置服务返回了无法解析的响应（HTTP ${response.status}）`);
+        throw new Error(response.status === 404 ? SERVICE_404 : `区域配置服务返回了无法解析的响应（HTTP ${response.status}）`);
       }
       if (!response.ok || !body || body.ok !== true) {
-        throw new Error(body?.error?.message || `保存失败（HTTP ${response.status}）`);
+        throw new Error(response.status === 404 ? SERVICE_404 : (body?.error?.message || `保存失败（HTTP ${response.status}）`));
       }
       return body;
     }
@@ -238,11 +240,19 @@ window.__ModuleLoader__.load({
       const [catalogLoading, setCatalogLoading] = useState(false);
       const [catalogError, setCatalogError] = useState(null);
       const [open, setOpen] = useState(false);
-      const [forced, setForced] = useState(false);
       const [error, setError] = useState(null);
       const [saving, setSaving] = useState(false);
       const [reloadToken, setReloadToken] = useState(0);
       const dialogRef = useRef(null);
+
+      const closeConfig = useCallback(() => {
+        setOpen(false);
+        setError(null);
+        if (cwd && state && !state.configured) {
+          setState({ ...state, dismissed: true });
+          void apiPost('dismiss', { workspace: cwd }).catch(() => {});
+        }
+      }, [cwd, state]);
 
       useEffect(() => {
         if (!cwd) {
@@ -256,7 +266,6 @@ window.__ModuleLoader__.load({
         setState(null);
         setDraft([]);
         setOpen(false);
-        setForced(false);
         Promise.all([
           apiGet(`op=state&workspace=${encodeURIComponent(cwd)}`, controller.signal),
           apiGet('op=catalog', controller.signal),
@@ -268,16 +277,14 @@ window.__ModuleLoader__.load({
           setCatalog(catalogBody.catalog);
           setCatalogError(null);
           setLoading(false);
-          if (!nextState.configured) {
-            setForced(true);
+          if (!nextState.configured && !nextState.dismissed) {
             setOpen(true);
           }
         }).catch((loadError) => {
           if (cancelled) return;
           setLoading(false);
           setError(loadError instanceof Error ? loadError.message : String(loadError));
-          setForced(true);
-          setOpen(true);
+          setOpen(false);
         });
         return () => {
           cancelled = true;
@@ -286,13 +293,13 @@ window.__ModuleLoader__.load({
       }, [cwd, reloadToken]);
 
       useEffect(() => {
-        if (!open || forced) return undefined;
+        if (!open) return undefined;
         const onKeyDown = (event) => {
-          if (event.key === 'Escape') setOpen(false);
+          if (event.key === 'Escape') closeConfig();
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-      }, [open, forced]);
+      }, [open, closeConfig]);
 
       useEffect(() => {
         if (!open) return;
@@ -320,7 +327,6 @@ window.__ModuleLoader__.load({
         if (!cwd) return;
         setError(null);
         setOpen(true);
-        setForced(false);
         try {
           const [stateBody, catalogBody] = await Promise.all([
             apiGet(`op=state&workspace=${encodeURIComponent(cwd)}`),
@@ -330,7 +336,6 @@ window.__ModuleLoader__.load({
           setDraft(cloneZones(stateBody.state.zones));
           setCatalog(catalogBody.catalog);
           setCatalogError(null);
-          if (!stateBody.state.configured) setForced(true);
         } catch (openError) {
           setError(openError instanceof Error ? openError.message : String(openError));
           if (!catalog) void refreshCatalog();
@@ -383,7 +388,6 @@ window.__ModuleLoader__.load({
           setState(body.state);
           setDraft(cloneZones(body.state.zones));
           setOpen(false);
-          setForced(false);
         } catch (saveError) {
           setError(saveError instanceof Error ? saveError.message : String(saveError));
         } finally {
@@ -420,7 +424,7 @@ window.__ModuleLoader__.load({
       const modal = open ? h('div', {
         className: 'dshz-backdrop',
         onMouseDown: (event) => {
-          if (event.target === event.currentTarget && !forced) setOpen(false);
+          if (event.target === event.currentTarget) closeConfig();
         },
       },
         h('div', {
@@ -434,14 +438,15 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dshz-head-main' },
               h('div', { className: 'dshz-eyebrow' }, '项目区域路由'),
               h('h2', { className: 'dshz-title', id: 'dshz-title' }, TITLE),
-              h('p', { className: 'dshz-subtitle' }, '为当前项目选择每个区域使用的模型。配置按项目独立保存，新项目需要重新选择。'),
+              h('p', { className: 'dshz-subtitle' }, '为当前项目选择每个区域使用的模型。配置按项目独立保存，新项目需要重新选择；可以关闭，之后从输入框左侧入口重新打开。'),
               h('div', { className: 'dshz-workspace', title: cwd }, cwd),
             ),
-            forced ? null : h('button', {
+            h('button', {
               type: 'button',
               className: 'dshz-close',
               'aria-label': '关闭',
-              onClick: () => setOpen(false),
+              title: '关闭',
+              onClick: closeConfig,
             }, '×'),
           ),
           h('div', { className: 'dshz-body' },
@@ -559,17 +564,17 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshz-foot' },
             h('div', { className: 'dshz-foot-hint' }, '主调度模型会接管本会话的请求；其余区域由主调度通过 zone_dispatch 按需调用。'),
             h('div', { className: 'dshz-foot-actions' },
-              forced ? null : h('button', {
+              h('button', {
                 type: 'button',
                 className: 'dshz-btn',
-                onClick: () => setOpen(false),
+                onClick: closeConfig,
               }, '取消'),
               h('button', {
                 type: 'button',
                 className: 'dshz-btn primary',
                 onClick: () => { void save(); },
                 disabled: saving || !hasAnyModel,
-              }, saving ? '保存中…' : (forced ? '保存并开始' : '保存配置')),
+              }, saving ? '保存中…' : (state && state.configured ? '保存配置' : '保存并开始')),
             ),
           ),
         ),

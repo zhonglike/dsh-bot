@@ -262,14 +262,17 @@ class WorkspaceStore {
     const data = await this.readAll();
     const entry = data.workspaces[key];
     if (!isRecord(entry)) {
-      return { workspace: rawWorkspace, key, configured: false, updatedAt: null, zones: defaultZones() };
+      return { workspace: rawWorkspace, key, configured: false, dismissed: false, updatedAt: null, zones: defaultZones() };
     }
+    const zones = Array.isArray(entry.zones) ? entry.zones : defaultZones();
+    const main = zones.find((zone) => zone.id === 'main' && zone.enabled && zone.provider && zone.model);
     return {
       workspace: typeof entry.workspace === 'string' ? entry.workspace : rawWorkspace,
       key,
-      configured: true,
+      configured: Boolean(main),
+      dismissed: Boolean(entry.dismissed),
       updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : null,
-      zones: Array.isArray(entry.zones) ? entry.zones : defaultZones(),
+      zones,
     };
   }
 
@@ -297,6 +300,7 @@ class WorkspaceStore {
           [key]: {
             workspace: rawWorkspace,
             updatedAt: Date.now(),
+            dismissed: false,
             zones: normalized,
           },
         },
@@ -309,8 +313,49 @@ class WorkspaceStore {
         workspace: rawWorkspace,
         key,
         configured: true,
+        dismissed: false,
         updatedAt: next.workspaces[key].updatedAt,
         zones: normalized,
+      };
+    };
+    this.queue = this.queue.then(run, run);
+    return this.queue;
+  }
+
+  async dismissWorkspace(rawWorkspace) {
+    const key = workspaceKey(rawWorkspace);
+    if (!key) throw new Error('缺少项目工作目录');
+    const run = async () => {
+      const data = await this.readAll();
+      const previous = isRecord(data.workspaces[key]) ? data.workspaces[key] : undefined;
+      const zones = previous && Array.isArray(previous.zones) && previous.zones.length > 0
+        ? previous.zones
+        : defaultZones();
+      const next = {
+        ...data,
+        version: STATE_VERSION,
+        workspaces: {
+          ...data.workspaces,
+          [key]: {
+            workspace: rawWorkspace,
+            updatedAt: Date.now(),
+            dismissed: true,
+            zones,
+          },
+        },
+      };
+      await this.writeAll(next);
+      const stat = await fsp.stat(this.file);
+      this.cache = next;
+      this.cacheSignature = `${stat.mtimeMs}:${stat.size}`;
+      const main = zones.find((zone) => zone.id === 'main' && zone.enabled && zone.provider && zone.model);
+      return {
+        workspace: rawWorkspace,
+        key,
+        configured: Boolean(main),
+        dismissed: true,
+        updatedAt: next.workspaces[key].updatedAt,
+        zones,
       };
     };
     this.queue = this.queue.then(run, run);
@@ -323,7 +368,7 @@ class WorkspaceStore {
     const run = async () => {
       const data = await this.readAll();
       if (!isRecord(data.workspaces[key])) {
-        return { workspace: rawWorkspace, key, configured: false, updatedAt: null, zones: defaultZones() };
+        return { workspace: rawWorkspace, key, configured: false, dismissed: false, updatedAt: null, zones: defaultZones() };
       }
       const workspaces = { ...data.workspaces };
       delete workspaces[key];
@@ -332,7 +377,7 @@ class WorkspaceStore {
       const stat = await fsp.stat(this.file);
       this.cache = next;
       this.cacheSignature = `${stat.mtimeMs}:${stat.size}`;
-      return { workspace: rawWorkspace, key, configured: false, updatedAt: null, zones: defaultZones() };
+      return { workspace: rawWorkspace, key, configured: false, dismissed: false, updatedAt: null, zones: defaultZones() };
     };
     this.queue = this.queue.then(run, run);
     return this.queue;
@@ -516,6 +561,11 @@ function createHttpApi(ctx, store, resolveMediaEndpoint) {
         try {
           if (op === 'save') {
             const state = await store.saveWorkspace(workspace, body.zones);
+            json(res, 200, { ok: true, state });
+            return;
+          }
+          if (op === 'dismiss') {
+            const state = await store.dismissWorkspace(workspace);
             json(res, 200, { ok: true, state });
             return;
           }
@@ -1388,11 +1438,14 @@ export function apply(ctx) {
         return `当前项目（${workspace}）尚未保存区域模型配置。用户需要先完成“选择哪个区域需要什么模型”页面；在此之前不要调用 zone_dispatch。`;
       }
       const zones = entry.zones;
-      const main = zones.find((zone) => zone.id === 'main');
+      const main = zones.find((zone) => zone.id === 'main' && zone.enabled && zone.provider && zone.model);
+      if (!main) {
+        return `当前项目（${workspace}）尚未保存可用的主调度模型配置。用户可以从输入框左侧“重新配置区域模型”打开配置页；在此之前不要调用 zone_dispatch。`;
+      }
       const enabled = zones.filter((zone) => zone.enabled);
       const lines = [
         `## 当前项目的区域模型（${workspace}）`,
-        `主调度模型: ${main?.provider && main?.model ? `${main.provider} / ${main.model}` : '未配置（会话模型不会被覆盖）'}`,
+        `主调度模型: ${main.provider} / ${main.model}`,
         '调用 `zone_dispatch` 时，`zone` 参数使用下列 ID：',
       ];
       for (const zone of enabled) {

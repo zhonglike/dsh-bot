@@ -8,7 +8,7 @@
 
 ### 目标
 
-1. 每个项目第一次打开时，强制用户完成「区域 → 模型」配置。
+1. 每个项目第一次打开时提示「区域 → 模型」配置；弹窗可关闭，关闭状态按项目保存。
 2. 预设 `main / text / code / image / video / tts / audio / 3d`，支持自定义区域。
 3. 每个区域可启停、改名、选模型。
 4. 配置按项目隔离。
@@ -48,7 +48,7 @@ dsh-bot/
 ```json
 {
   "name": "dsh-bot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -81,14 +81,14 @@ dsh-bot/
 
 ## 3. 配置页 UI
 
-### 3.1 入口与强制逻辑
+### 3.1 入口与显示逻辑
 
 Client 半注册两个 Slot：
 
 | Slot | 用途 |
 |---|---|
 | `conversation.input.left` | 常驻入口「重新配置区域模型」 |
-| `conversation.composer.dock` | 强制配置页 / 重新配置页的 modal 容器 |
+| `conversation.composer.dock` | 首次配置页 / 重新配置页的 modal 容器 |
 
 组件从 Slot 标准 props 取 `sessionId`，再用 `useSessions` 读取当前会话的 `cwd`：
 
@@ -104,13 +104,22 @@ const cwd = useSessions((snapshot) =>
 cwd 变化
   → GET /zone-router/api?op=state&workspace=<cwd>
   → GET /zone-router/api?op=catalog
-  → configured === false
-       → forced = true, open = true（不可关闭）
+  → configured === false 且 dismissed === false
+       → 自动打开配置页（可 X / 取消 / Esc / 点遮罩关闭）
+  → configured === false 且 dismissed === true
+       → 不自动打开；保留输入框左侧入口
   → configured === true
-       → 关闭配置页，显示常驻入口
+       → 不自动打开；保留入口
 ```
 
-常驻入口通过模块级 `configOpenSignal` 通知 dock 组件打开同一个配置页；打开时会重新拉取 state 和 catalog，避免外部修改导致脏读。
+关闭未配置的弹窗时，Client 调用：
+
+```http
+POST /zone-router/api?op=dismiss
+{ "workspace": "<cwd>" }
+```
+
+Host 把该项目的 `dismissed` 记为 `true`，因此同一项目下次打开不会再自动弹窗；保存配置会把 `dismissed` 重置为 `false`。
 
 ### 3.2 文案
 
@@ -133,7 +142,7 @@ cwd 变化
 3. 已启用区域显示名不能为空、不能重名。
 4. 区域数量上限 64，自定义区域 id 必须匹配 `^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$`。
 
-首次配置没有关闭按钮；重新配置时允许 `Esc`、点击遮罩或「取消」关闭。
+首次配置和重新配置都允许 `Esc`、点击遮罩、右上角 `×` 或「取消」关闭；关闭未配置弹窗会写入 `dismissed: true`。
 
 ### 3.4 主题与样式
 
@@ -169,6 +178,7 @@ const profileDir = process.env.DSH_PROFILE_DIR
     "<normalized-cwd>": {
       "workspace": "M:\\DSH-bot",
       "updatedAt": 1792787748765,
+      "dismissed": false,
       "zones": [
         {
           "id": "main",
@@ -192,7 +202,9 @@ const profileDir = process.env.DSH_PROFILE_DIR
   - `readWorkspace(rawWorkspace)`
   - `peekWorkspaceSync(rawWorkspace)`（供同步的 prompt context 使用）
   - `saveWorkspace(rawWorkspace, zones)`
+  - `dismissWorkspace(rawWorkspace)`（关闭未配置弹窗时记录 `dismissed: true`）
   - `deleteWorkspace(rawWorkspace)`
+- `configured` 由 `main` 是否启用且有 provider/model 决定，而不是“文件里有条目”。
 - 写入：临时文件 + `rename`，Windows 上 `EPERM`/`EEXIST` 时回退到 `copyFile + unlink`。
 - 写入串行化：`this.queue = this.queue.then(run, run)`。
 
@@ -212,6 +224,7 @@ const profileDir = process.env.DSH_PROFILE_DIR
 GET  /zone-router/api?op=catalog
 GET  /zone-router/api?op=state&workspace=<encoded cwd>
 POST /zone-router/api?op=save     body: { workspace, zones }
+POST /zone-router/api?op=dismiss  body: { workspace }
 POST /zone-router/api?op=reset    body: { workspace }
 ```
 
@@ -477,7 +490,7 @@ ConfigEntryButton (conversation.input.left)
             └─ 打开同一个“选择哪个区域需要什么模型”页面
 ```
 
-`state.configured === false` 时，首次加载会自动打开 modal 且没有关闭按钮。  
+`state.configured === false && state.dismissed !== true` 时，首次加载会自动打开 modal；弹窗可随时关闭。关闭后写入 `dismissed: true`，同一项目不再自动打开。  
 保存成功后 Host 返回规范化后的完整 state，Client 直接用它更新 draft，避免本地校验与 Host 校验不一致。
 
 ---
@@ -511,11 +524,13 @@ ConfigEntryButton (conversation.input.left)
 - [ ] `plugin_manager install_bundle` 返回 `application: applied`，`warnings: []`。
 - [ ] `conversation.input.left` 中有 `dsh-bot-config-entry`。
 - [ ] `conversation.composer.dock` 中有 `dsh-bot-zones`。
-- [ ] 新项目首次打开强制出现「选择哪个区域需要什么模型」。
+- [ ] 新项目首次打开出现「选择哪个区域需要什么模型」，且可以 X / 取消关闭。
 - [ ] 未选主调度模型时保存被拒绝。
 - [ ] 启用但未选模型的区域保存被拒绝。
-- [ ] 保存后同一项目新会话不再强制弹窗。
-- [ ] 换项目后重新强制弹窗。
+- [ ] 关闭未配置弹窗后，同一项目再次打开不再自动弹出。
+- [ ] 关闭后点击「重新配置区域模型」仍能打开配置页。
+- [ ] 保存后同一项目新会话不再自动弹窗。
+- [ ] 换项目后首次打开会再次提示（可关闭）。
 - [ ] 「重新配置区域模型」能打开同一个页面。
 - [ ] `zone_list` 能看到当前项目映射。
 - [ ] `zone_dispatch` 能把任务发给 code/text 等区域并返回文本。

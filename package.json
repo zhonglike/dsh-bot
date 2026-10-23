@@ -1,6 +1,6 @@
 {
   "name": "dsh-bot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Multi-zone professional model routing for DeepSeek Harness: choose a model for each work area, per project.",
   "type": "module",
   "main": "./index.js",

@@ -16,7 +16,7 @@ DSH 官方「设置 → 模型」已经能添加 Provider、Base URL、API Key�
 本插件**不重复实现**这些能力，只做三件事：
 
 1. **按项目**把已配置的模型分配到不同工作区域。
-2. 新项目第一次打开时，**强制弹出配置页**；没有配置完主调度模型，就不能开始提问。
+2. 新项目第一次打开时**弹出配置页**；可以关闭，关闭后本项目不再自动弹出，随时可从输入框左侧入口重新打开。
 3. 主调度模型通过 `zone_dispatch` 工具，把代码、写作等任务交给对应区域的模型；**图片区和视频区会实际生成图片/视频文件并保存到项目目录**。
 
 配置页标题固定为：
@@ -75,7 +75,15 @@ DSH 官方「设置 → 模型」已经能添加 Provider、Base URL、API Key�
 
 更完整的 AI 安装/验收清单见 [docs/AI-INSTALL.md](docs/AI-INSTALL.md)。
 
-### 3.2 手动安装（开发者）
+### 3.2 手动安装（推荐 Release）
+
+```text
+plugin_manager install_bundle target="https://github.com/zhonglike/dsh-bot/releases/download/v0.2.1/dsh-bot-0.2.1.tgz"
+```
+
+Release 包不依赖本地目录链接，重启/重装 profile 后更不容易丢。
+
+### 3.3 本地开发安装
 
 ```powershell
 git clone https://github.com/zhonglike/dsh-bot.git M:\DSH-bot
@@ -87,11 +95,7 @@ git clone https://github.com/zhonglike/dsh-bot.git M:\DSH-bot
 plugin_manager install_bundle target="M:\DSH-bot"
 ```
 
-或从 Release 的 `.tgz` 安装：
-
-```text
-plugin_manager install_bundle target="https://github.com/zhonglike/dsh-bot/releases/download/v0.2.0/dsh-bot-0.2.0.tgz"
-```
+本地 link 适合开发；如果之后重装 profile、运行 QQ bridge setup 或切换 profile，可能把 `dsh-bot` 依赖/ bundle 行移除，重启后就会 404。遇到这种情况重新从 Release 安装即可。
 
 `install_bundle` 会完成依赖链接、bundle 选择与生效；不要手动改 profile 的 `package.json` 或 `cordis.patch.yml`。
 
@@ -103,10 +107,11 @@ plugin_manager install_bundle target="https://github.com/zhonglike/dsh-bot/relea
    - 自定义 API 用官方的「添加模型提供商 / 自定义模型 API」填写 Base URL 和 API Key。
    - 用「获取可用模型」拉取模型列表。
 2. 新开一个项目 / 会话。
-3. 插件会强制弹出 **「选择哪个区域需要什么模型」**。
+3. 插件会弹出 **「选择哪个区域需要什么模型」**（可关闭）。
 4. 至少为主调度模型选择一个模型；需要使用的区域勾选「启用」并选择模型。
 5. 点击 **「保存并开始」**。
 6. 之后在输入框左侧点击 **「重新配置区域模型」** 可以随时修改。
+7. 首次弹窗直接关闭也不会阻塞聊天；该项目会记住“已关闭”，下次不再自动弹出。
 
 > 同一项目的新会话沿用该项目配置；换一个新项目会重新要求配置。
 
@@ -218,6 +223,7 @@ C:\Users\<你>\.dsh\profiles\desktop\zone-router\state.json
     "m:/dsh-bot": {
       "workspace": "M:\\DSH-bot",
       "updatedAt": 1792787748765,
+      "dismissed": false,
       "zones": [
         {
           "id": "main",
@@ -286,6 +292,7 @@ dsh-bot/
 - 主调度模型会接管根会话的模型请求；如果你在官方模型选择器里选了别的模型，下一次请求仍会切回 `main` 区域配置的模型。
 - 子代理、压缩等内部请求不强制切换。
 - 区域下拉框来自当前已注册 Provider 的模型目录；如果某个 Provider 目录拉取失败，该 Provider 会显示为空组，配置页会提示刷新。
+- **重启后 404**：说明当前 profile 中 `dsh-bot` 已丢失（常见于本地 link 安装后被 profile 重装/QQ bridge setup 覆盖）。检查 `plugin_manager` 是否有 `include:dsh-bot`，然后从 Release `.tgz` 重新安装。详见 [docs/AI-INSTALL.md](docs/AI-INSTALL.md#重启后-404--配置服务未加载)。
 - 配置文件损坏时 Host 会返回明确错误，不会静默清空；需要手动修复或删除该项目的条目。
 
 ---
@@ -318,7 +325,7 @@ node --check client.js
 - Host 半注册 `zone_list` / `zone_dispatch` 工具；
 - Client 半注册：
   - `conversation.input.left` → 常驻入口「重新配置区域模型」
-  - `conversation.composer.dock` → 强制配置页 / 重新配置页
+  - `conversation.composer.dock` → 首次配置页 / 重新配置页
 - 可用 `cordis_inspect_query` 验证 Slot 占用与工具是否可见。
 
 完整设计、接口定义与伪代码见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。

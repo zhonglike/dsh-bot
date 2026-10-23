@@ -83,7 +83,7 @@
 - `zone_list`
 - `zone_dispatch`
 
-### D. 强制配置页
+### D. 首次配置页（可关闭）
 
 新开项目或新会话，应该看到：
 
@@ -92,23 +92,34 @@
 - 8 个预设区域各自的下拉框
 - `+ 添加自定义区域`
 - `保存并开始`
+- 右上角 `×`、底部「取消」、Esc、点击遮罩都能关闭
 
-未选择主调度模型时，保存按钮应保持不可用或提示必须先选主调度模型。
+未选择主调度模型时，保存按钮应提示必须先选主调度模型。
+
+关闭后：
+
+- 弹窗消失，聊天可以正常使用。
+- 同一项目再次打开不再自动弹窗。
+- 输入框左侧「重新配置区域模型」仍可打开。
 
 ### E. 持久化
 
-保存后检查：
+保存或关闭后检查：
 
 ```text
 $DSH_PROFILE_DIR/zone-router/state.json
 ```
 
-应存在当前项目的 cwd key，且文件中**没有**任何 API Key。
+应存在当前项目的 cwd key，且文件中**没有**任何 API Key。关闭未配置弹窗时，该条目应包含：
+
+```json
+{ "dismissed": true, "zones": [ ... ] }
+```
 
 ### F. 项目隔离
 
-- 同一项目新建会话：不应再次强制弹窗。
-- 换一个新项目：应再次强制弹窗。
+- 同一项目新建会话：不应再次自动弹窗。
+- 换一个新项目：首次打开会再次提示（可关闭）。
 
 ---
 
@@ -120,6 +131,35 @@ $DSH_PROFILE_DIR/zone-router/state.json
 2. 确认这两个 Slot 占用存在。
 3. 确认 Host 的 `/zone-router/api` 可访问。
 4. 刷新页面；Client 半更新后需要重新加载。
+
+### 重启后 404 / 配置服务未加载
+
+这是**安装丢失**，不是配置页本身的问题。表现通常是：
+
+- 页面还能加载旧的上次缓存 Client 代码；
+- 浏览器 Network 里 `/zone-router/api` 返回 404；
+- `plugin_manager` list_plugins 中找不到 `include:dsh-bot`；
+- `$DSH_PROFILE_DIR/package.json` 的 dependencies / `dsh.profile.bundles` 中没有 `dsh-bot`。
+
+原因：
+
+- 安装用的是本地 link，后续 profile 重装、QQ bridge setup、profile 切换或清理把依赖/ bundle 行重写了；
+- 或者安装到了另一个 profile（例如 desktop 装过，但当前跑的是 web）。
+
+排查：
+
+```text
+plugin_manager list_plugins，搜索 include:dsh-bot
+检查 $DSH_PROFILE_DIR/package.json
+检查 $DSH_PROFILE_DIR/cordis.patch.yml
+```
+
+修复：安装到**当前实际运行的 profile**，优先用 Release 的 `.tgz`，而不是本地 link。安装后重启一次，再确认：
+
+```text
+plugin_manager list_plugins → include:dsh-bot / active
+GET /zone-router/api?op=state&workspace=<cwd> → 200
+```
 
 ### 下拉框为空
 
