@@ -70,6 +70,7 @@ window.__ModuleLoader__.load({
 .dshz-remove { margin-left: auto; border: none; background: none; color: var(--dsw-alias-state-error-primary); font: inherit; font-size: 11px; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
 .dshz-remove:hover { background: var(--dsw-alias-bg-layer-2); }
 .dshz-desc { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 1.55; }
+.dshz-media-hint { margin: 0; color: var(--dsw-alias-state-warn-primary); font-size: 10px; line-height: 1.5; }
 .dshz-route { display: flex; flex-direction: column; gap: 5px; }
 .dshz-label { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .dshz-select { width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; outline: none; }
@@ -532,6 +533,11 @@ window.__ModuleLoader__.load({
                     }, '删除') : null,
                   ),
                   h('p', { className: 'dshz-desc' }, zone.description),
+                  zone.kind === 'image' || zone.kind === 'video' ? h('p', { className: 'dshz-media-hint' },
+                    zone.kind === 'image'
+                      ? '会实际生成图片文件；请选择 qwen-image 等图像生成模型。Token Plan 需要 sk-sp- 套餐 Key。'
+                      : '会实际生成视频文件；请选择 wan3.0-video 等视频生成模型。Token Plan 需要 sk-sp- 套餐 Key。',
+                  ) : null,
                   h('div', { className: 'dshz-route' },
                     h('label', { className: 'dshz-label' }, '使用模型'),
                     h('select', {

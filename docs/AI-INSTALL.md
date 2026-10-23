@@ -148,4 +148,6 @@ $DSH_PROFILE_DIR/zone-router/state.json
 - 不要改包名为带作用域的临时名；Client 模块 id 必须与包名一致。
 - 不要为配置页启动第二个 Web 服务。
 - 不要用 iframe / 独立 HTML 替代 Slot 页面。
-- 不要声称媒体区域会直接生成图片/视频/音频；它们只负责对应模型的文本产出。
+- 图片区/视频区会真实调用生成接口并写入 `<项目>/.dsh-bot/generated/`；媒体生成需要对应 Provider 的生成模型和有效凭据。
+- Token Plan 媒体接口要求套餐 API Key（以 `sk-sp-` 开头）；普通 DashScope Key 会 401，需在 设置 → 模型 更新。
+- TTS / 音频 / 3D 区当前仍只做文本/规格/方案路由，不声称已生成音频或 3D 文件。

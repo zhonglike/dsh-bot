@@ -17,7 +17,7 @@ DSH 官方「设置 → 模型」已经能添加 Provider、Base URL、API Key�
 
 1. **按项目**把已配置的模型分配到不同工作区域。
 2. 新项目第一次打开时，**强制弹出配置页**；没有配置完主调度模型，就不能开始提问。
-3. 主调度模型通过 `zone_dispatch` 工具，把代码、写作、视觉提示词等任务交给对应区域的模型执行。
+3. 主调度模型通过 `zone_dispatch` 工具，把代码、写作等任务交给对应区域的模型；**图片区和视频区会实际生成图片/视频文件并保存到项目目录**。
 
 配置页标题固定为：
 
@@ -44,9 +44,14 @@ DSH 官方「设置 → 模型」已经能添加 Provider、Base URL、API Key�
 - 配置按 **项目工作目录（Workspace / cwd）** 隔离，保存在本机 DSH profile 中。
 - 已配置项目内，聊天输入框左侧常驻 **「重新配置区域模型」** 入口。
 - 主调度模型会接管当前根会话的模型请求；子代理不受影响。
+- **图片区 / 视频区是真正的媒体生成区域**：
+  - 图片区调用图像生成模型，保存 PNG/JPEG/WebP 到项目；
+  - 视频区调用视频生成模型，保存 MP4/WebM 到项目；
+  - 文件默认写入 `<项目>/.dsh-bot/generated/`；
+  - 支持 Token Plan 的图片/视频接口，图片也兼容通用 OpenAI `/images/generations`。
 - 提供两个模型工具：
   - `zone_list`：查看当前项目的区域映射。
-  - `zone_dispatch`：把一个自包含任务派发给指定区域的模型。
+  - `zone_dispatch`：把一个自包含任务派发给指定区域；图片/视频区返回真实文件路径。
 
 ---
 
@@ -85,7 +90,7 @@ plugin_manager install_bundle target="M:\DSH-bot"
 或从 Release 的 `.tgz` 安装：
 
 ```text
-plugin_manager install_bundle target="https://github.com/zhonglike/dsh-bot/releases/download/v0.1.0/dsh-bot-0.1.0.tgz"
+plugin_manager install_bundle target="https://github.com/zhonglike/dsh-bot/releases/download/v0.2.0/dsh-bot-0.2.0.tgz"
 ```
 
 `install_bundle` 会完成依赖链接、bundle 选择与生效；不要手动改 profile 的 `package.json` 或 `cordis.patch.yml`。
@@ -147,19 +152,46 @@ zone_list(): {
 }
 
 zone_dispatch(input: {
-  zone: string        // 区域 id，例如 code / image / custom-xxx
-  task: string        // 自包含任务，区域模型看不到聊天历史
+  zone: string        // 区域 id，例如 code / image / video / custom-xxx
+  task: string        // 自包含任务；图片/视频区这里是生成提示词
   context?: string    // 可选补充材料
+  options?: {         // 图片/视频生成参数
+    size?: string       // 如 1024*1024
+    ratio?: string      // 如 16:9
+    resolution?: string // 如 720P
+    duration?: number   // 视频秒数 1-30
+    count?: number      // 图片张数 1-4
+    negativePrompt?: string
+    seed?: number
+  }
 }): {
   zone: { id, name, kind }
   provider: string
   model: string
+  kind?: 'image' | 'video' | ...
   text: string
+  media?: Array<{
+    kind: 'image' | 'video'
+    path: string          // 绝对路径
+    relativePath: string  // 相对项目，如 .dsh-bot/generated/xxx.png
+    mediaType: string
+    bytes: number
+    attachment?: object
+    fileAttachment?: object
+  }>
   finish?: object
   usage?: object
   truncated?: boolean
 }
 ```
+
+图片/视频生成结果会写入：
+
+```text
+<项目>/.dsh-bot/generated/
+```
+
+Host 会同时尝试把图片登记为 DSH 图片附件、把视频登记为文件附件；即使附件策略拒绝，工作区文件仍然保留。
 
 ---
 
@@ -243,12 +275,14 @@ dsh-bot/
 
 当前边界（重要）：
 
-- **区域模型是 DSH 暴露的聊天/多模态模型路由，不是媒体生成执行器。**
-  - 图片区适合做视觉理解、出图提示词、构图和规格；
-  - 视频区适合分镜、镜头语言和视频提示词；
-  - TTS / 音频 / 3D 区适合脚本、规格、分析和实现方案。
-  - 插件不会伪造“已生成图片/视频/音频”。真正生成仍需要对应工具或上游 API。
-- `zone_dispatch` 是**单轮、无工具**的模型调用；区域模型看不到主会话历史，也不能调用文件/终端工具。
+- **图片区和视频区会真实调用生成接口并落盘**：
+  - 图片区支持 Token Plan 图片接口，以及通用 OpenAI 兼容 `POST /images/generations`；
+  - 视频区目前支持 Token Plan 视频异步接口（提交 → 轮询 → 下载）；
+  - Token Plan 需要**套餐 API Key（以 `sk-sp-` 开头）**。普通 DashScope Key 会返回 401，请在 设置 → 模型 中更新 `qwen-token-plan` 的 Key。
+  - 如果聊天用的 Key 与媒体套餐 Key 不是同一个，可以新建一个只用于媒体的 Provider（相同 Base URL + `sk-sp-` Key），然后在图片/视频区选择它。
+  - 图片/视频模型必须在 Provider 的模型列表中存在；可先在设置里「获取可用模型」。
+- TTS / 音频 / 3D 区目前仍是文本/规格/方案路由，不做媒体文件生成。
+- 文本/代码/TTS/音频/3D/自定义区域的 `zone_dispatch` 是**单轮、无工具**的模型调用；区域模型看不到主会话历史，也不能调用文件/终端工具。
 - 主调度模型会接管根会话的模型请求；如果你在官方模型选择器里选了别的模型，下一次请求仍会切回 `main` 区域配置的模型。
 - 子代理、压缩等内部请求不强制切换。
 - 区域下拉框来自当前已注册 Provider 的模型目录；如果某个 Provider 目录拉取失败，该 Provider 会显示为空组，配置页会提示刷新。
@@ -258,7 +292,7 @@ dsh-bot/
 
 ## 9. 安全
 
-- 不读取、不传输、不落盘 API Key。
+- 不保存 API Key。生成媒体时按需从 DSH 官方凭据体系读取，只发送给对应 Provider，不写入插件配置或日志。
 - Host 只暴露同源 JSON API：`/zone-router/api`。
   - 校验 `Origin` 与请求 Host 一致；
   - POST 必须是 `application/json`，请求体上限 64 KiB；

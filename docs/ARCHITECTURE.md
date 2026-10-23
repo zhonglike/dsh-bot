@@ -48,7 +48,7 @@ dsh-bot/
 ```json
 {
   "name": "dsh-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -370,6 +370,95 @@ ctx.on('agent/request', async (payload, next) => {
 
 ---
 
+## 6.5 图片 / 视频真实生成
+
+图片区和视频区不走 `ctx.llm.stream`（DSH 的 `llm` 服务是聊天路由），而是由 Host 直接调用 Provider 的媒体生成 HTTP API。
+
+### 端点与凭据解析
+
+```js
+const providerInfo = ctx.llm.listConfigurableProviders()
+  .find(p => p.provider === zone.provider);
+
+const settings = ctx.get('settings');
+const providerConfig = settings.describe({ redactSecrets: true })
+  .flatMap(d => Object.entries(d.value?.providers ?? {}))
+  .find(([id]) => id === zone.provider)?.[1];
+
+const baseURL = providerConfig?.baseURL || providerInfo?.defaultBaseURL;
+const apiKeyRef = providerConfig?.apiKeyEnv
+  || providerInfo?.nativeAuth?.env?.[0];
+
+const apiKey = (await ctx.credentials.resolve(apiKeyRef))?.value;
+```
+
+- 不复制、不落盘 Key；每次生成重新解析，密钥更新立即生效。
+- 调试端点：`GET /zone-router/api?op=media-info&provider=<id>` 只返回 Base URL、凭据 ref、Key 长度、是否 `sk-sp-` 前缀，不返回 Key。
+
+### Token Plan 图片
+
+```http
+POST {origin}/api/v1/services/aigc/multimodal-generation/generation
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "model": "qwen-image-3.0",
+  "input": { "messages": [{ "role": "user", "content": [{ "text": "<prompt>" }] }] },
+  "parameters": { "size": "1024*1024", "n": 1, "prompt_extend": true, "watermark": false }
+}
+```
+
+从 `output.choices[*].message.content[*].image` 取 URL，下载后落盘。
+
+### Token Plan 视频
+
+```http
+POST {origin}/api/v1/services/aigc/video-generation/video-synthesis
+X-DashScope-Async: enable
+
+{
+  "model": "wan3.0-video",
+  "input": { "prompt": "<prompt>" },
+  "parameters": { "resolution": "720P", "ratio": "16:9", "duration": 5 }
+}
+```
+
+然后每 5 秒轮询：
+
+```http
+GET {origin}/api/v1/tasks/{task_id}
+```
+
+直到 `task_status === "SUCCEEDED"`，从 `output.video_url` 下载 MP4。超时 840 秒。
+
+### 通用 OpenAI 图片
+
+非 Token Plan 的图片区尝试：
+
+```http
+POST {baseURL}/images/generations
+{ "model": "...", "prompt": "...", "n": 1, "size": "1024x1024", "response_format": "b64_json" }
+```
+
+支持 `data[*].b64_json` 与 `data[*].url`。
+
+### 落盘与附件
+
+```text
+<workspace>/.dsh-bot/generated/<UTC timestamp>-<zone>-<random>.<ext>
+```
+
+- 图片会尝试 `ctx.attachments.saveImage`，工具结果返回 `image` content block，聊天里直接可见。
+- 视频会尝试 `ctx.attachments.saveFile`，工具结果返回 `file` content block。
+- 即使附件策略拒绝，工作区文件仍然保留。
+- 工具结果文本包含 `relativePath`，主模型应把它作为 Markdown 链接展示。
+
+### 失败诊断
+
+- HTTP 401：Token Plan 媒体接口要求 `sk-sp-` 套餐 Key；普通 DashScope Key 会失败。错误里会带凭据 ref 和前缀判断。
+- 无 `baseURL` / 无凭据 / 模型不支持：返回明确中文错误，不伪造成功。
+
 ## 7. Client 端数据流
 
 ```text
@@ -406,11 +495,13 @@ ConfigEntryButton (conversation.input.left)
 
 ## 9. 已知限制
 
-1. **媒体区域不是生成执行器**：区域模型是 DSH 暴露的聊天/多模态模型，插件不直接调用图片/视频/TTS API。要真正生成媒体，需要把这些能力作为工具或上游 Provider 提供。
-2. **单轮无工具派发**：`zone_dispatch` 只传任务文本，区域模型不能使用文件、终端、搜索等工具。
-3. **主模型接管是强制的**：根会话每次请求都会被切到 `main` 区域模型；如果用户想临时用别的模型，需要改主调度配置。
-4. **模型目录依赖 Provider 可用性**：某个 Provider 的 `listModels` 失败时，该组会显示为空，配置页提示刷新。
-5. **配置按 cwd 识别**：同一物理项目通过不同路径/符号链接打开时会被视为不同项目。
+1. **图片/视频依赖上游生成接口**：图片区支持 Token Plan 与通用 OpenAI 兼容图片接口；视频区目前只实现 Token Plan 异步视频接口。TTS/音频/3D 仍只做文本/规格/方案路由。
+2. **Token Plan 需要套餐 Key**：媒体接口要求 `sk-sp-` 前缀的 Token Plan 套餐 Key；普通 DashScope Key 会 401。
+3. **Media 生成耗时**：视频提交后需要轮询，可能数分钟；工具超时 840 秒。
+4. **单轮无工具派发**：文本类 `zone_dispatch` 只传任务文本，区域模型不能使用文件、终端、搜索等工具。
+5. **主模型接管是强制的**：根会话每次请求都会被切到 `main` 区域模型；如果用户想临时用别的模型，需要改主调度配置。
+6. **模型目录依赖 Provider 可用性**：某个 Provider 的 `listModels` 失败时，该组会显示为空，配置页提示刷新。
+7. **配置按 cwd 识别**：同一物理项目通过不同路径/符号链接打开时会被视为不同项目。
 
 ---
 
@@ -428,5 +519,8 @@ ConfigEntryButton (conversation.input.left)
 - [ ] 「重新配置区域模型」能打开同一个页面。
 - [ ] `zone_list` 能看到当前项目映射。
 - [ ] `zone_dispatch` 能把任务发给 code/text 等区域并返回文本。
+- [ ] 图片区使用生成模型时，`zone_dispatch` 在 `.dsh-bot/generated/` 下产生真实图片文件。
+- [ ] 视频区使用 `wan3.0-video` 时，`zone_dispatch` 提交任务、轮询并下载真实视频文件。
+- [ ] Token Plan 401 时返回可操作的错误（凭据 ref + `sk-sp-` 提示）。
 - [ ] 配置文件路径为 `$DSH_PROFILE_DIR/zone-router/state.json`。
 - [ ] 配置文件中没有 API Key。

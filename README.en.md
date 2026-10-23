@@ -21,6 +21,7 @@ A standard Cordis bundle with a Host half and a Web Client half. Works in the of
 - Persistent **重新配置区域模型** entry in the composer
 - Per-project storage (`Workspace / cwd`), no API keys stored
 - `zone_list` and `zone_dispatch` tools for the orchestrator
+- **Real image/video generation**: image and video zones call media APIs and write files to `<project>/.dsh-bot/generated/`
 - Reuses the official DSH **Settings → Models** provider/model directory
 
 ---
@@ -68,7 +69,9 @@ User message
   → main replies to the user
 ```
 
-`zone_dispatch` is a single-turn, tool-less specialist call. The specialist cannot see the chat history, so `task` must be self-contained.
+`zone_dispatch` is a single-turn, tool-less specialist call for text-like zones. Image and video zones actually generate media: Token Plan image/video models are supported, and images also support a generic OpenAI-compatible `/images/generations` endpoint. Generated files are saved under `.dsh-bot/generated/`.
+
+Token Plan media requires a Token Plan package API key starting with `sk-sp-`. A normal DashScope key returns HTTP 401; update the `qwen-token-plan` key under Settings → Models.
 
 ---
 
@@ -84,8 +87,9 @@ The file maps a normalized project cwd to its zone list. It contains no secrets.
 
 ## Limitations
 
-- Zones route to DSH chat/multimodal models; they are not native image/video/audio generators. Media zones produce executable briefs, prompts, specs, and analysis.
-- `zone_dispatch` is single-turn and has no tools.
+- Image and video zones generate real files. TTS/audio/3D zones still route text, specs, and analysis.
+- Token Plan video generation is asynchronous (submit → poll → download) and can take minutes.
+- `zone_dispatch` for text-like zones is single-turn and has no tools.
 - The main zone overrides the root session's model on every request.
 - Subagents are not overridden.
 
